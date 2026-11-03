@@ -4,6 +4,7 @@ import hashlib, hmac, json, os, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from http.cookies import SimpleCookie
 from urllib.parse import urlparse, parse_qs
+import collections
 
 PUSH_TOKEN = os.environ.get("PUSH_TOKEN", "")
 VIEW_KEY = os.environ.get("VIEW_KEY", "")
@@ -32,6 +33,38 @@ def view_ok(candidate):
 def eq(a, b):
     return bool(a) and bool(b) and hmac.compare_digest(a.encode(), b.encode())
 
+LOGIN_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<meta name="theme-color" content="#0b0f14"><title>Paper Desk</title>
+<style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0f14;color:#e6edf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+form{width:min(92vw,360px);background:#131a22;border:1px solid #243040;border-radius:14px;padding:24px}
+h1{font-size:18px;margin:0 0 4px}p.s{margin:0 0 18px;color:#8b98a8;font-size:13px}
+input{width:100%;font-size:18px;padding:13px;border-radius:10px;border:1px solid #2d3b4e;background:#0b0f14;color:#e6edf3}
+button{width:100%;margin-top:14px;font-size:17px;padding:13px;border:0;border-radius:10px;background:#2f81f7;color:#fff;font-weight:600}
+.e{color:#ff7b72;font-size:14px;margin:0 0 12px}</style></head><body>
+<form method="POST" action="/login"><h1>Paper Desk</h1><p class="s">Live paper-trading view. Enter passcode.</p>
+__MSG__<input type="password" name="k" autocomplete="current-password" autofocus required placeholder="Passcode">
+<button type="submit">Unlock</button></form></body></html>"""
+
+def login_page(msg=""):
+    m = f'<p class="e">{msg}</p>' if msg else ""
+    return LOGIN_HTML.replace("__MSG__", m).encode()
+
+FAILS = collections.defaultdict(list)   # ip -> [timestamps]
+GFAILS = []
+FLOCK = threading.Lock()
+def rate_limited(ip):
+    now = time.time()
+    with FLOCK:
+        FAILS[ip] = [t for t in FAILS[ip] if now - t < 60]
+        GFAILS[:] = [t for t in GFAILS if now - t < 60]
+        if len(FAILS) > 5000: FAILS.clear()
+        return len(FAILS[ip]) >= 5 or len(GFAILS) >= 30
+def note_fail(ip):
+    now = time.time()
+    with FLOCK:
+        FAILS[ip].append(now); GFAILS.append(now)
+
 class H(BaseHTTPRequestHandler):
     server_version = "PaperDesk"
     def log_message(self, *a): pass
@@ -52,6 +85,9 @@ class H(BaseHTTPRequestHandler):
         if view_ok(self.headers.get("X-View-Key", "")): return True
         if view_ok((q.get("k") or [""])[0]): return True
         return False
+    def _ip(self):
+        xf = self.headers.get("X-Forwarded-For", "")
+        return (xf.split(",")[-1].strip() if xf else self.client_address[0]) or "?"
     def do_HEAD(self): self.do_GET()
     def do_GET(self):
         u = urlparse(self.path); q = parse_qs(u.query)
@@ -60,7 +96,9 @@ class H(BaseHTTPRequestHandler):
         if u.path not in ("/", "/index.html", "/api/state"):
             return self._send(404, b'{"error":"not found"}')
         if not self._authed(q):
-            return self._send(401, b'{"error":"view key required"}')
+            if u.path == "/api/state":
+                return self._send(401, b'{"error":"view key required"}')
+            return self._send(200, login_page(), "text/html; charset=utf-8")
         if u.path == "/api/state":
             with LOCK:
                 raw, t, n = STATE["raw"], STATE["t"], STATE["pushes"]
@@ -70,12 +108,27 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, json.dumps(d).encode())
         extra = []
         if view_ok((q.get("k") or [""])[0]):
-            extra.append(("Set-Cookie", f"pdk={COOKIE_VAL}; Max-Age=2592000; Path=/; HttpOnly; Secure; SameSite=Strict"))
+            extra.append(("Set-Cookie", f"pdk={COOKIE_VAL}; Max-Age=2592000; Path=/; HttpOnly; Secure; SameSite=Lax"))
             # drop ?k= from the URL bar
             return self._send(302, b"", "text/plain", extra + [("Location", "/")])
         return self._send(200, INDEX, "text/html; charset=utf-8")
+    def _login(self):
+        ip = self._ip()
+        try: n = int(self.headers.get("Content-Length", "0"))
+        except ValueError: n = 0
+        if n <= 0 or n > 2048: return self._send(413, login_page("Bad request"), "text/html; charset=utf-8")
+        form = parse_qs(self.rfile.read(n).decode("utf-8", "replace"))
+        if rate_limited(ip):
+            time.sleep(1)
+            return self._send(429, login_page("Too many attempts. Wait a minute."), "text/html; charset=utf-8", [("Retry-After", "60")])
+        if view_ok((form.get("k") or [""])[0]):
+            ck = f"pdk={COOKIE_VAL}; Max-Age=2592000; Path=/; HttpOnly; Secure; SameSite=Lax"
+            return self._send(302, b"", "text/plain", [("Set-Cookie", ck), ("Location", "/")])
+        note_fail(ip); time.sleep(1)
+        return self._send(401, login_page("Wrong passcode"), "text/html; charset=utf-8")
     def do_POST(self):
         u = urlparse(self.path)
+        if u.path == "/login": return self._login()
         if u.path != "/push": return self._send(404, b'{"error":"not found"}')
         if not eq(self.headers.get("X-Push-Token", ""), PUSH_TOKEN):
             return self._send(401, b'{"error":"bad token"}')
