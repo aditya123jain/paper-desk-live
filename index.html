@@ -93,7 +93,7 @@ function render(d){
  $('asof').textContent=d.as_of||'—';
  const a=d.state_age_s;$('age').textContent=a==null?'':`(${Math.round(a)}s ago)`;
  const st=$('stale');
- if(d.state_stale){st.textContent=`⚠ STALE DATA: engine state file ${a==null?'missing':'last updated '+Math.round(a)+'s ago'} (> 60s). Prices below may be old.`;st.classList.add('show')}else st.classList.remove('show');
+ if(d.state_stale){st.textContent=`⚠ STALE DATA: engine state file ${a==null?'missing':'last updated '+Math.round(a)+'s ago'} (> 180s). Prices below may be old.`;st.classList.add('show')}else st.classList.remove('show');
  $('spot').textContent=f(d.spot,2);$('spotsrc').textContent=d.spot_src==='live'?'· live':'· engine';
  $('spotsub').innerHTML=(d.spot_time?(d.spot_src==='live'?'quote ':'engine poll ')+d.spot_time+' IST':'')+(d.spot_chg!=null?` · <span class="${cls(d.spot_chg)}">${d.spot_chg>0?'+':''}${f(d.spot_chg,1)}</span> vs prev close`:'')+(d.spot_src==='live'&&d.engine_spot!=null?` <span class="eng">· engine ${f(d.engine_spot,2)}${d.engine_spot_time?' @'+d.engine_spot_time.slice(0,8):''}</span>`:'');
  $('vix').textContent=d.vix==null?'n/a':f(d.vix,2);
@@ -105,11 +105,11 @@ function render(d){
  $('stopsub').textContent=`${f(p.used_pct_of_stop,1)}% of ${p.stop_pct_cfg}% daily stop used · headroom ₹${f(p.headroom,0)}`;
  const tb=document.querySelector('#pos tbody');
  tb.innerHTML=d.positions.length?d.positions.map(r=>`<tr><td>${r.tsym}<div class="sm mut">${r.strategy||''} · in ${(r.entry_time||'').slice(11,16)}</div></td><td>${r.lots} (${r.qty})</td><td>${f(r.entry)}</td><td><b>${f(r.ltp)}</b> <span class="eng">${r.ltp_src==='live'?'live '+(r.quote_time||''):'engine'}</span><div class="eng">engine ${f(r.engine_ltp)} @${(r.engine_ltp_time||'—').slice(0,8)}</div></td><td>${f(r.stop)}</td><td>${f(r.target)}</td>
-  <td>${sp(r.gross_pnl,0)}<div class="eng">engine ${r.engine_gross_pnl==null?'—':Math.round(r.engine_gross_pnl)}</div></td><td>${sp(r.pnl_pct,2)}%</td><td>${f(r.dist_stop)} <span class="mut sm">(${f(r.dist_stop_pct,1)}%)</span></td><td>${f(r.dist_target)} <span class="mut sm">(${f(r.dist_target_pct,1)}%)</span></td><td class="${(r.ltp_src==='live'?r.quote_age_s:r.ltp_age_s)>(r.ltp_src==='live'?15:90)?'neg':'mut'}">${r.ltp_src==='live'?(r.quote_age_s==null?'—':Math.round(r.quote_age_s)+'s'):(r.ltp_age_s==null?'—':Math.round(r.ltp_age_s)+'s (eng)')}</td></tr>`).join(''):'<tr><td colspan="11" class="mut">No open positions.</td></tr>';
+  <td>${sp(r.gross_pnl,0)}<div class="eng">engine ${r.engine_gross_pnl==null?'—':Math.round(r.engine_gross_pnl)}</div></td><td>${sp(r.pnl_pct,2)}%</td><td>${f(r.dist_stop)} <span class="mut sm">(${f(r.dist_stop_pct,1)}%)</span></td><td>${f(r.dist_target)} <span class="mut sm">(${f(r.dist_target_pct,1)}%)</span></td><td class="${(r.ltp_src==='live'?r.quote_age_s:r.ltp_age_s)>(r.ltp_src==='live'?90:180)?'neg':'mut'}">${r.ltp_src==='live'?(r.quote_age_s==null?'—':Math.round(r.quote_age_s)+'s'):(r.ltp_age_s==null?'—':Math.round(r.ltp_age_s)+'s (eng)')}</td></tr>`).join(''):'<tr><td colspan="11" class="mut">No open positions.</td></tr>';
  $('pnl').innerHTML=`<div>Realized (net)</div><div>${sp(p.realized,0)}</div><div>Unrealized (net est.)</div><div>${sp(p.unrealized,0)}</div><div>Day P&amp;L</div><div><b>${sp(p.day,0)}</b></div><div>Daily stop</div><div>${inr(p.daily_stop)}</div><div>Headroom to stop</div><div>₹${f(p.headroom,0)}</div><div>Risk / trade</div><div>${d.limits.risk_per_trade_pct}% · max open ${d.limits.max_open}</div><div>Flat by</div><div>${d.limits.flat_by||'—'} IST</div>`;
  $('lv').innerHTML=d.levels.map(l=>`<div>${l.label}</div><div>${l.why||''}</div>`).join('');
  $('limnote').textContent=(d.limits.max_open_engine!=null&&d.limits.max_open_engine!=d.limits.max_open)?`Max open = ${d.limits.max_open} (config.json). The running engine still has ${d.limits.max_open_engine} loaded and picks up ${d.limits.max_open} at its next restart.`:'';
- const pl=d.poller||{};$('pollinfo').textContent=pl.active?`feed ${pl.cycle_s}s cycle · ${pl.rate_per_s} calls/s`:(pl.window_open===false?'feed idle (outside 09:15–15:30 / blackout)':'');
+ const pl=d.poller||{};$('pollinfo').textContent=pl.active?`refreshes every 60s · feed ${pl.rate_per_s} calls/s`:(pl.window_open===false?'feed idle (outside 09:15–15:30 / blackout)':'');
  $('chart').innerHTML=chart(d);
  const cb=document.querySelector('#closed tbody');
  cb.innerHTML=d.closed.length?d.closed.map(r=>`<tr><td>${(r.time_in||'').slice(11,16)}</td><td>${(r.time_out||'').slice(11,16)}</td><td>${r.strike} ${r.ce_pe}</td><td>${r.lots}</td><td>${f(+r.entry)}</td><td>${f(+r.exit)}</td><td>${sp(+r.gross_pnl,0)}</td><td>${sp(+r.net_pnl,0)}</td><td>${r.reason||''}</td></tr>`).join(''):'<tr><td colspan="9" class="mut">No closed trades today.</td></tr>';
@@ -135,11 +135,11 @@ async function tick(){
   const d=await r.json();const rl=d._relay||{};fails=0;
   if(!rl.has_data){rb.textContent='Market closed / box offline: no data received yet (the trading box pushes only during market hours).';rb.classList.add('show');$('poll').style.color='#c9a227';$('poll').textContent='● waiting for box';return}
   const pa=rl.push_age_s;
-  if(pa>30){rb.textContent='DATA STALE: last update from the trading box was '+Math.round(pa)+'s ago (box offline, market closed, or feed paused). Values below are the last known.';rb.classList.add('show');$('poll').style.color='#ff5c5c';$('poll').textContent='● stale'}
+  if(pa>150){rb.textContent='DATA STALE: last update from the trading box was '+Math.round(pa)+'s ago (box offline, market closed, or feed paused). Values below are the last known.';rb.classList.add('show');$('poll').style.color='#ff5c5c';$('poll').textContent='● stale'}
   else{rb.classList.remove('show');$('poll').style.color='#2ecc71';$('poll').textContent='● live'}
   if(d.state_age_s!=null)d.state_age_s+=pa||0;
   render(d);
  }catch(e){fails++;$('poll').style.color='#ff5c5c';$('poll').textContent='● relay unreachable ('+fails+')  (free plan may be waking up)';}
 }
-tick();setInterval(tick,3000);
+tick();setInterval(tick,60000);
 </script></body></html>
