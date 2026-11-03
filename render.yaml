@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: paper-desk-live
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py
+    healthCheckPath: /healthz
+    envVars:
+      - key: PUSH_TOKEN
+        sync: false
+      - key: VIEW_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.12.3"
