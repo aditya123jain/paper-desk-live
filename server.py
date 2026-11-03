@@ -1,6 +1,6 @@
 """Paper Desk live relay: receives pushes from the trading box, serves the dashboard.
 Stdlib only. PAPER data display only - no trading functionality."""
-import hmac, json, os, threading, time
+import hashlib, hmac, json, os, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from http.cookies import SimpleCookie
 from urllib.parse import urlparse, parse_qs
@@ -11,6 +11,23 @@ MAX_BODY = 1_000_000
 LOCK = threading.Lock()
 STATE = {"raw": None, "t": None, "pushes": 0}
 INDEX = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html"), "rb").read()
+
+# View key: either VIEW_KEY (plain) or VIEW_KEY_HASH = "pbkdf2$<iters>$<salt_hex>$<hash_hex>"
+VIEW_HASH = os.environ.get("VIEW_KEY_HASH", "")
+def _hash_parts():
+    try:
+        _, it, salt, h = VIEW_HASH.split("$"); return int(it), bytes.fromhex(salt), h
+    except Exception: return None
+HP = _hash_parts()
+COOKIE_VAL = hmac.new(HP[1], b"cookie|" + HP[2].encode(), "sha256").hexdigest() if HP else VIEW_KEY
+
+def view_ok(candidate):
+    """candidate = key presented via ?k= or X-View-Key"""
+    if not candidate: return False
+    if HP:
+        it, salt, h = HP
+        return hmac.compare_digest(hashlib.pbkdf2_hmac("sha256", candidate.encode(), salt, it).hex(), h)
+    return eq(candidate, VIEW_KEY)
 
 def eq(a, b):
     return bool(a) and bool(b) and hmac.compare_digest(a.encode(), b.encode())
@@ -29,11 +46,11 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command != "HEAD": self.wfile.write(body)
     def _authed(self, q):
-        if not VIEW_KEY: return False
+        if not (VIEW_KEY or HP): return False
         ck = SimpleCookie(self.headers.get("Cookie", ""))
-        if "pdk" in ck and eq(ck["pdk"].value, VIEW_KEY): return True
-        if eq(self.headers.get("X-View-Key", ""), VIEW_KEY): return True
-        if eq((q.get("k") or [""])[0], VIEW_KEY): return True
+        if "pdk" in ck and eq(ck["pdk"].value, COOKIE_VAL): return True
+        if view_ok(self.headers.get("X-View-Key", "")): return True
+        if view_ok((q.get("k") or [""])[0]): return True
         return False
     def do_HEAD(self): self.do_GET()
     def do_GET(self):
@@ -52,8 +69,8 @@ class H(BaseHTTPRequestHandler):
             d["_relay"] = {"has_data": raw is not None, "push_age_s": age, "pushes": n}
             return self._send(200, json.dumps(d).encode())
         extra = []
-        if eq((q.get("k") or [""])[0], VIEW_KEY):
-            extra.append(("Set-Cookie", f"pdk={VIEW_KEY}; Max-Age=2592000; Path=/; HttpOnly; Secure; SameSite=Strict"))
+        if view_ok((q.get("k") or [""])[0]):
+            extra.append(("Set-Cookie", f"pdk={COOKIE_VAL}; Max-Age=2592000; Path=/; HttpOnly; Secure; SameSite=Strict"))
             # drop ?k= from the URL bar
             return self._send(302, b"", "text/plain", extra + [("Location", "/")])
         return self._send(200, INDEX, "text/html; charset=utf-8")
